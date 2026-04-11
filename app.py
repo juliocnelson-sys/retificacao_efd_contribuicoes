@@ -394,9 +394,40 @@ def retificar(txt_bytes: bytes, planilha: dict) -> tuple[bytes, list]:
             log.append("✔ 0000 marcado como retificador (IND_RET=1)")
             break
 
-    bloco0_extra = []
+    # ── Hierarquia do bloco 0 conforme Manual EFD Contribuições ─────────────
+    # Ordem: 0140 → 0150 → 0190 → 0200 → 0400 → 0450 → 0500 → 0990
+    # Cada novo registro é inserido APÓS os registros existentes do mesmo tipo,
+    # mantendo a hierarquia e nunca ultrapassando o 0990.
 
-    # 0140
+    def find_last_reg(lines_list, reg_prefix, before_idx):
+        """Encontra o índice da última linha do registro, limitado a before_idx."""
+        last = None
+        for i, line in enumerate(lines_list):
+            if i >= before_idx:
+                break
+            if line.strip().startswith(f"|{reg_prefix}|"):
+                last = i
+        return last
+
+    b0end = parsed["bloco_0_end"]
+    offset = 0  # acumula deslocamento a cada inserção
+
+    def insert_after_last(reg_prefix, new_lines):
+        nonlocal offset
+        if not new_lines:
+            return
+        b0 = b0end + offset
+        last_pos = find_last_reg(lines, reg_prefix, b0)
+        if last_pos is not None:
+            insert_at = last_pos + 1
+        else:
+            # Não existe nenhum registro desse tipo: insere antes do 0990
+            insert_at = b0
+        lines[insert_at:insert_at] = new_lines
+        offset += len(new_lines)
+
+    # 0140 — novos estabelecimentos
+    novos_0140 = []
     for emp in filter_periodo(planilha.get("0_EMPRESA", []), periodo):
         cnpj = gc(emp, "CNPJ_ESTAB", "CNPJ")
         if not cnpj:
@@ -404,61 +435,67 @@ def retificar(txt_bytes: bytes, planilha: dict) -> tuple[bytes, list]:
         if cnpj in parsed["cnpj_0140"]:
             log.append(f"→ 0140 CNPJ {cnpj} já existe — mantém")
         else:
-            bloco0_extra.append(build_0140(emp))
+            novos_0140.append(build_0140(emp))
             log.append(f"✔ 0140 CNPJ {cnpj} criado")
+    insert_after_last("0140", novos_0140)
 
-    # 0150
-    for r in filter_periodo(planilha.get("0150_PARTICIPANTES", []), periodo):
-        bloco0_extra.append(build_0150(r))
+    # 0150 — participantes
+    novos_0150 = [build_0150(r) for r in filter_periodo(planilha.get("0150_PARTICIPANTES", []), periodo)]
+    insert_after_last("0150", novos_0150)
 
-    # 0190
+    # 0190 — unidades
     ex_0190 = set()
     for line in lines:
         if line.strip().startswith("|0190|"):
-            f = parse_pipe(line.strip())
-            ex_0190.add(f[1] if len(f) > 1 else "")
+            f = parse_pipe(line.strip()); ex_0190.add(f[1] if len(f) > 1 else "")
+    novos_0190 = []
     for r in filter_periodo(planilha.get("0190_UNIDADES", []), periodo):
         u = gc(r, "UNID")
         if u and u not in ex_0190:
-            bloco0_extra.append(build_0190(r))
+            novos_0190.append(build_0190(r))
+    insert_after_last("0190", novos_0190)
 
-    # 0200 centralizado
+    # 0200 — itens (centralizado: sem duplicar COD_ITEM)
+    novos_0200 = []
     for r in filter_periodo(planilha.get("0200_ITENS", []), periodo):
         cod = gc(r, "COD_ITEM")
         if not cod:
             continue
         if cod not in parsed["cod_0200"]:
-            bloco0_extra.append(build_0200(r))
+            novos_0200.append(build_0200(r))
             parsed["cod_0200"].add(cod)
             log.append(f"✔ 0200 item {cod} inserido")
         else:
             log.append(f"→ 0200 item {cod} já existe — mantém")
+    insert_after_last("0200", novos_0200)
 
-    # 0400
+    # 0400 — naturezas de receita
     ex_0400 = set()
     for line in lines:
         if line.strip().startswith("|0400|"):
-            f = parse_pipe(line.strip())
-            ex_0400.add(f[1] if len(f) > 1 else "")
+            f = parse_pipe(line.strip()); ex_0400.add(f[1] if len(f) > 1 else "")
+    novos_0400 = []
     for r in filter_periodo(planilha.get("0400_NAT_REC", []), periodo):
         c = gc(r, "COD_NAT_REC")
         if c and c not in ex_0400:
-            bloco0_extra.append(build_0400(r))
+            novos_0400.append(build_0400(r))
+    insert_after_last("0400", novos_0400)
 
-    # 0500
+    # 0500 — plano de contas (inserido após o último 0500, antes do 0990)
     ex_0500 = set()
     for line in lines:
         if line.strip().startswith("|0500|"):
-            f = parse_pipe(line.strip())
-            ex_0500.add(f[1] if len(f) > 1 else "")
+            f = parse_pipe(line.strip()); ex_0500.add(f[1] if len(f) > 1 else "")
+    novos_0500 = []
     for r in filter_periodo(planilha.get("0500_PLANO_CONTAS", []), periodo):
         c = gc(r, "COD_CTA")
         if c and c not in ex_0500:
-            bloco0_extra.append(build_0500(r))
+            novos_0500.append(build_0500(r))
+    insert_after_last("0500", novos_0500)
 
-    if bloco0_extra and parsed["bloco_0_end"] is not None:
-        lines[parsed["bloco_0_end"]:parsed["bloco_0_end"]] = bloco0_extra
-        log.append(f"✔ {len(bloco0_extra)} linha(s) inseridas no bloco 0")
+    total_ins = len(novos_0140) + len(novos_0150) + len(novos_0190) + len(novos_0200) + len(novos_0400) + len(novos_0500)
+    if total_ins:
+        log.append(f"✔ {total_ins} linha(s) inseridas no bloco 0 (ordem hierárquica)") 
 
     # Bloco A
     a_map = defaultdict(list)
@@ -480,7 +517,8 @@ def retificar(txt_bytes: bytes, planilha: dict) -> tuple[bytes, list]:
             d_map[cnpj].extend(build_d_block(r))
     lines = inject_by_cnpj(lines, "D", dict(d_map), log)
 
-    # Bloco F
+    # Bloco F — F100, F120 e F130 dentro do F010 do estabelecimento correto
+    # Ordem dentro do sub-bloco F010: F100 → F120 → F130
     f_map = defaultdict(list)
     for aba, fn in [("F100", build_f100), ("F120", build_f120), ("F130", build_f130)]:
         for r in filter_periodo(planilha.get(aba, []), periodo):
