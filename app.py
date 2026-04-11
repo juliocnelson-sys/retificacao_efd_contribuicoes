@@ -44,7 +44,17 @@ st.markdown("""
 # ─────────────────────────────────────────────────────────────────────────────
 # Funções auxiliares de formato SPED
 # ─────────────────────────────────────────────────────────────────────────────
-ENCODING = "windows-1252"
+ENCODINGS_TO_TRY = ["latin-1", "windows-1252", "utf-8", "utf-8-sig"]
+
+def detect_encoding(data: bytes) -> str:
+    """Tenta decodificar com múltiplos encodings e retorna o primeiro que funcionar."""
+    for enc in ENCODINGS_TO_TRY:
+        try:
+            data.decode(enc)
+            return enc
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return "latin-1"  # fallback seguro
 
 def parse_pipe(line: str) -> list:
     return line.strip().strip("|").split("|")
@@ -369,7 +379,8 @@ def agrupar_por_doc(rows: list) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 def retificar(txt_bytes: bytes, planilha: dict) -> tuple[bytes, list]:
     log = []
-    lines = txt_bytes.decode(ENCODING).splitlines(keepends=True)
+    enc = detect_encoding(txt_bytes)
+    lines = txt_bytes.decode(enc, errors="replace").splitlines(keepends=True)
     periodo = get_periodo(lines)
     log.append(f"→ Período detectado: {periodo or 'não encontrado'}")
     parsed = parse_txt(lines)
@@ -481,7 +492,7 @@ def retificar(txt_bytes: bytes, planilha: dict) -> tuple[bytes, list]:
     lines = recalc_9900(lines)
     log.append(f"✔ Bloco 9 recalculado — {len(lines)} linhas no total")
 
-    result_bytes = "".join(lines).encode(ENCODING)
+    result_bytes = "".join(lines).encode(enc, errors="replace")
     return result_bytes, log
 
 
