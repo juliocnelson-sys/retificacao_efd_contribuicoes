@@ -94,14 +94,38 @@ def gc(row: dict, *keys) -> str:
 # Leitura da planilha
 # ─────────────────────────────────────────────────────────────────────────────
 def sheet_to_dicts(ws) -> list:
-    headers = []
+    # Detecta automaticamente a linha de cabecalho real.
+    # Abas com grupos coloridos (A100, C100, D100) tem 3 linhas de cabecalho.
+    # Abas simples (0150, F100 etc.) tem 2 linhas de cabecalho.
+    # Busca a primeira linha que contenha campos reconheciveis.
+    CAMPOS_ANCORA = {
+        'CNPJ_ESTAB', 'PERIODO', 'COD_PART', 'COD_ITEM',
+        'UNID', 'COD_NAT_REC', 'COD_CTA', 'DT_ALT', 'IND_OPER',
+        'IND_EMIT', 'NUM_DOC', 'COD_MOD', 'NAT_BC_CRED', 'COD_SIT',
+    }
+    all_rows = list(ws.iter_rows(values_only=True))
+    if not all_rows:
+        return []
+
+    header_idx = None
+    for i, row in enumerate(all_rows):
+        vals = set()
+        for v in row:
+            if v is not None:
+                s = str(v).strip().split('\n')[0].strip()
+                vals.add(s)
+        if vals & CAMPOS_ANCORA:
+            header_idx = i
+            break
+
+    if header_idx is None:
+        return []
+
+    headers = [str(c).strip() if c else f"COL{j}"
+               for j, c in enumerate(all_rows[header_idx])]
+
     rows = []
-    for i, row in enumerate(ws.iter_rows(values_only=True)):
-        if i == 0:
-            continue
-        if not headers:
-            headers = [str(c).strip() if c else f"COL{j}" for j, c in enumerate(row)]
-            continue
+    for row in all_rows[header_idx + 1:]:
         if all(c is None for c in row):
             continue
         rows.append({headers[j]: (row[j] if row[j] is not None else "")
