@@ -81,7 +81,71 @@ def soma_valores(*vals) -> float:
     return total
 
 def fmt_br(f: float) -> str:
-    return f"{f:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    # Formato SPED: decimal com virgula, SEM ponto de milhar
+    # Ex: 1234567.89 -> '1234567,89'
+    return f"{f:.2f}".replace(".", ",")
+
+def fmt_data(v) -> str:
+    """Converte data para o formato SPED: DDMMAAAA.
+    Aceita: datetime, date, string dd/mm/aaaa, string aaaa-mm-dd,
+            string dd/mm/aaaa hh:mm:ss, etc.
+    """
+    if v is None or str(v).strip() in ("", "None"):
+        return ""
+    import datetime as _dt
+    if isinstance(v, (_dt.datetime, _dt.date)):
+        return v.strftime("%d%m%Y")
+    s = str(v).strip()
+    # Formato Python/ISO: 2021-10-05 00:00:00 ou 2021-10-05
+    if len(s) >= 10 and s[4] == "-":
+        try:
+            d = _dt.datetime.strptime(s[:10], "%Y-%m-%d")
+            return d.strftime("%d%m%Y")
+        except ValueError:
+            pass
+    # Formato dd/mm/aaaa
+    if len(s) >= 10 and s[2] == "/" and s[5] == "/":
+        try:
+            d = _dt.datetime.strptime(s[:10], "%d/%m/%Y")
+            return d.strftime("%d%m%Y")
+        except ValueError:
+            pass
+    # Formato ddmmaaaa (já correto)
+    if len(s) == 8 and s.isdigit():
+        return s
+    return s  # retorna como está se não reconhecido
+
+def fmt_valor_sped(v) -> str:
+    """Formata valor numerico para o padrao SPED: decimal com virgula, SEM ponto de milhar.
+    Ex: 1234567.89 -> '1234567,89'  |  '1.234.567,89' -> '1234567,89'
+    """
+    if v is None or str(v).strip() in ("", "None", "0,00", "0.00"):
+        return "0,00"
+    s = str(v).strip()
+    # Remove ponto de milhar: '1.234.567,89' -> '1234567,89'
+    # Detecta se ha virgula como decimal (padrao BR) ou ponto (padrao EN)
+    if "," in s and "." in s:
+        # Ex: '1.234,56' (BR) ou '1,234.56' (EN)
+        if s.rfind(",") > s.rfind("."):
+            # virgula eh decimal: remove pontos de milhar
+            s = s.replace(".", "")
+        else:
+            # ponto eh decimal: remove virgulas de milhar, troca ponto por virgula
+            s = s.replace(",", "").replace(".", ",")
+    elif "." in s:
+        # so ponto: pode ser decimal EN ou milhar (sem virgula)
+        # Se tem mais de 3 digitos apos o ponto, eh milhar (ex: 1.000 = 1000)
+        parts = s.split(".")
+        if len(parts[-1]) == 3 and len(parts) > 1:
+            # ponto de milhar
+            s = s.replace(".", "") + ",00"
+        else:
+            # decimal EN
+            s = s.replace(".", ",")
+    # Garante 2 casas decimais
+    if "," not in s:
+        s += ",00"
+    return s
 
 def gc(row: dict, *keys) -> str:
     for k in keys:
@@ -210,6 +274,10 @@ def build_0500(r):
                     gc(r,"IND_CTA"), gc(r,"NOME_CTA"), gc(r,"COD_CTA_SUP"), gc(r,"COD_CTA_REF"), ""])
 
 def build_a_block(grupo: list) -> list:
+    # Layout A100 do Manual EFD Contribuicoes: 21 campos
+    # |A100|IND_OPER|IND_EMIT|COD_PART|COD_MOD|COD_SIT|SER|SUB|NUM_DOC|CHV_DOC|
+    # |DT_DOC|DT_EXE_SERV|VL_DOC|IND_PGTO|VL_DESC|VL_BC_PIS|ALIQ_PIS|VL_PIS|
+    # |VL_BC_COFINS|ALIQ_COFINS|VL_COFINS|COD_CTA|COD_MUN|
     r0 = grupo[0]
     vl_doc    = soma_valores(*[r.get("VL_ITEM", 0) for r in grupo])
     vl_desc   = soma_valores(*[r.get("VL_DESC_ITEM", 0) for r in grupo])
@@ -217,21 +285,29 @@ def build_a_block(grupo: list) -> list:
     vl_pis    = soma_valores(*[r.get("VL_PIS_ITEM", 0) for r in grupo])
     vl_bc_cof = soma_valores(*[r.get("VL_BC_COFINS_ITEM", 0) for r in grupo])
     vl_cof    = soma_valores(*[r.get("VL_COFINS_ITEM", 0) for r in grupo])
+    aliq_pis  = fmt_valor_sped(r0.get("ALIQ_PIS_ITEM", ""))
+    aliq_cof  = fmt_valor_sped(r0.get("ALIQ_COFINS_ITEM", ""))
     lines = [to_pipe(["A100",
         gc(r0,"IND_OPER"), gc(r0,"IND_EMIT"), gc(r0,"COD_PART\n(Fornecedor/Cliente)"),
         gc(r0,"COD_MOD"), gc(r0,"COD_SIT"), gc(r0,"SER"), gc(r0,"SUB"),
-        gc(r0,"NUM_DOC"), gc(r0,"CHV_DOC"), gc(r0,"DT_DOC"), gc(r0,"DT_EXE_SERV"),
+        gc(r0,"NUM_DOC"), gc(r0,"CHV_DOC"),
+        fmt_data(r0.get("DT_DOC","")),
+        fmt_data(r0.get("DT_EXE_SERV","")),
         fmt_br(vl_doc), gc(r0,"IND_PGTO"), fmt_br(vl_desc),
-        fmt_br(vl_bc_pis), fmt_valor(r0.get("ALIQ_PIS_ITEM","")), fmt_br(vl_pis),
-        fmt_br(vl_bc_cof), fmt_valor(r0.get("ALIQ_COFINS_ITEM","")), fmt_br(vl_cof),
+        fmt_br(vl_bc_pis), aliq_pis, fmt_br(vl_pis),
+        fmt_br(vl_bc_cof), aliq_cof, fmt_br(vl_cof),
         gc(r0,"COD_CTA"), gc(r0,"COD_MUN")])]
     for i, r in enumerate(grupo, 1):
         lines.append(to_pipe(["A170", str(i), gc(r,"COD_ITEM"), gc(r,"DESCR_COMPL"),
-            fmt_valor(r.get("VL_ITEM","")), fmt_valor(r.get("VL_DESC_ITEM","")),
+            fmt_valor_sped(r.get("VL_ITEM","")), fmt_valor_sped(r.get("VL_DESC_ITEM","")),
             gc(r,"NAT_BC_CRED"), gc(r,"IND_ORIG_CRED"), gc(r,"CST_PIS"),
-            fmt_valor(r.get("VL_BC_PIS_ITEM","")), fmt_valor(r.get("ALIQ_PIS_ITEM","")), fmt_valor(r.get("VL_PIS_ITEM","")),
-            gc(r,"CST_COFINS"), fmt_valor(r.get("VL_BC_COFINS_ITEM","")),
-            fmt_valor(r.get("ALIQ_COFINS_ITEM","")), fmt_valor(r.get("VL_COFINS_ITEM","")),
+            fmt_valor_sped(r.get("VL_BC_PIS_ITEM","")),
+            fmt_valor_sped(r.get("ALIQ_PIS_ITEM","")),
+            fmt_valor_sped(r.get("VL_PIS_ITEM","")),
+            gc(r,"CST_COFINS"),
+            fmt_valor_sped(r.get("VL_BC_COFINS_ITEM","")),
+            fmt_valor_sped(r.get("ALIQ_COFINS_ITEM","")),
+            fmt_valor_sped(r.get("VL_COFINS_ITEM","")),
             gc(r,"COD_CTA_ITEM"), gc(r,"COD_CCUS")]))
     return lines
 
@@ -246,7 +322,7 @@ def build_c_block(grupo: list) -> list:
     lines = [to_pipe(["C100",
         gc(r0,"IND_OPER"), gc(r0,"IND_EMIT"), gc(r0,"COD_PART\n(Fornecedor/Cliente)"),
         gc(r0,"COD_MOD"), gc(r0,"COD_SIT"), gc(r0,"SER"), gc(r0,"NUM_DOC"),
-        gc(r0,"CHV_NFE"), gc(r0,"DT_DOC"), gc(r0,"DT_E_S"),
+        gc(r0,"CHV_NFE"), fmt_data(r0.get("DT_DOC","")), fmt_data(r0.get("DT_E_S","")),
         fmt_br(vl_doc), gc(r0,"IND_PGTO"), fmt_br(vl_desc),
         fmt_valor(r0.get("VL_ABAT_NT","")), fmt_br(vl_doc - vl_desc),
         gc(r0,"IND_FRT"), fmt_valor(r0.get("VL_FRT","")), fmt_valor(r0.get("VL_SEG","")),
@@ -375,6 +451,49 @@ def build_f130(r):
 # ─────────────────────────────────────────────────────────────────────────────
 # Bloco 9 e injeção
 # ─────────────────────────────────────────────────────────────────────────────
+def recalc_totalizadores(lines: list) -> list:
+    """
+    Recalcula todos os registros totalizadores de quantidade de linhas:
+    - 0990: total de linhas do bloco 0 (incluindo o proprio 0990)
+    - A990: total de linhas do bloco A (incluindo o proprio A990)
+    - C990: total de linhas do bloco C (incluindo o proprio C990)
+    - D990: total de linhas do bloco D (incluindo o proprio D990)
+    - F990: total de linhas do bloco F (incluindo o proprio F990)
+    - 9990: total de linhas do bloco 9 (incluindo o proprio 9990)
+    """
+    # Conta linhas por bloco
+    contadores = defaultdict(int)
+    bloco_atual = None
+    for line in lines:
+        ls = line.strip()
+        if not ls.startswith("|"):
+            continue
+        reg = parse_pipe(ls)[0]
+        if not reg:
+            continue
+        # Identifica bloco pelo primeiro caractere do registro
+        if reg[0].isdigit():
+            bloco_atual = "0" if reg[0] == "0" else reg[0]
+        elif reg[0].isalpha():
+            bloco_atual = reg[0].upper()
+        if bloco_atual:
+            contadores[bloco_atual] += 1
+
+    # Atualiza cada totalizador X990 nas linhas
+    result = []
+    for line in lines:
+        ls = line.strip()
+        if ls.startswith("|") and ls.endswith("990|") or ("|" in ls and "990|" in ls):
+            f = parse_pipe(ls)
+            reg = f[0] if f else ""
+            if reg.endswith("990") and len(reg) == 4:
+                bloco = reg[0].upper()
+                total = contadores.get(bloco, 0) + 1  # +1 inclui o proprio X990
+                result.append(to_pipe([reg, str(total)]))
+                continue
+        result.append(line)
+    return result
+
 def recalc_9900(lines: list) -> list:
     counter = defaultdict(int)
     new_lines = []
@@ -604,8 +723,9 @@ def retificar(txt_bytes: bytes, planilha: dict) -> tuple[bytes, list]:
                 f_map[cnpj].append(fn(r))
     lines = inject_by_cnpj(lines, "F", dict(f_map), log)
 
+    lines = recalc_totalizadores(lines)
     lines = recalc_9900(lines)
-    log.append(f"✔ Bloco 9 recalculado — {len(lines)} linhas no total")
+    log.append(f"✔ Totalizadores e bloco 9 recalculados — {len(lines)} linhas no total")
 
     result_bytes = "".join(lines).encode(enc, errors="replace")
     return result_bytes, log
