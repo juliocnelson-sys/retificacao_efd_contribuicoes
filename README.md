@@ -66,6 +66,6 @@ Acesse de qualquer computador da rede: http://IP_DO_SERVIDOR:8080
 app.py              ← Aplicativo principal
 requirements.txt    ← Dependências Python
 retifica_efd.py     ← Script de linha de comando (uso avançado)
-EFD_Contribuicoes_Modelo_v3.xlsx  ← Planilha modelo para preenchimento
+EFD_Contribuicoes_Modelo_v4.xlsx  ← Planilha modelo para preenchimento
 README.md           ← Este arquivo
 ```

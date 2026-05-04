@@ -247,6 +247,54 @@ def build_c_block(grupo: list) -> list:
             fmt_valor(r.get("VL_COFINS_ITEM","")), gc(r,"COD_CTA_ITEM")]))
     return lines
 
+
+def build_c500_block(row) -> list:
+    """
+    Monta C500 + C501 + C505 a partir de uma linha da planilha C500_C501_C505.
+    VL_PIS e VL_COFINS do C500 são preenchidos com os valores de C501/C505.
+    Hierarquia: C500 (cabeçalho NF energia/comunicação/gás/água)
+                C501 (PIS)
+                C505 (COFINS)
+    """
+    vl_pis    = gc(row, "VL_PIS_501")
+    vl_cofins = gc(row, "VL_COFINS_505")
+
+    c500 = to_pipe(["C500",
+        gc(row, "COD_PART"),
+        gc(row, "COD_MOD"),
+        gc(row, "COD_SIT"),
+        gc(row, "COD_SIT_ESP"),
+        gc(row, "IND_EMIT"),
+        gc(row, "NUM_DOC"),
+        gc(row, "DT_DOC"),
+        gc(row, "DT_ENT"),
+        fmt_valor(row.get("VL_DOC", "")),
+        fmt_valor(row.get("VL_DESC", "")),
+        fmt_valor(row.get("VL_MERC", "")),
+        fmt_valor(vl_pis),
+        fmt_valor(vl_cofins),
+        gc(row, "CHV_DOCe"),
+    ])
+    c501 = to_pipe(["C501",
+        gc(row, "CST_PIS"),
+        fmt_valor(row.get("VL_BC_PIS", "")),
+        gc(row, "NAT_BC_CRED"),
+        fmt_valor(row.get("VL_BC_PIS_2", "")),
+        fmt_valor(row.get("ALIQ_PIS", "")),
+        fmt_valor(vl_pis),
+        gc(row, "COD_CTA_501"),
+    ])
+    c505 = to_pipe(["C505",
+        gc(row, "CST_COFINS"),
+        fmt_valor(row.get("VL_BC_COFINS", "")),
+        gc(row, "NAT_BC_CRED"),
+        fmt_valor(row.get("VL_BC_COFINS_2", "")),
+        fmt_valor(row.get("ALIQ_COFINS", "")),
+        fmt_valor(vl_cofins),
+        gc(row, "COD_CTA_505"),
+    ])
+    return [c500, c501, c505]
+
 def build_d_block(r) -> list:
     return [
         to_pipe(["D100", gc(r,"IND_OPER"), gc(r,"IND_EMIT"), gc(r,"COD_PART\n(Transportadora)"),
@@ -503,10 +551,15 @@ def retificar(txt_bytes: bytes, planilha: dict) -> tuple[bytes, list]:
         a_map[g["cnpj"]].extend(build_a_block(g["rows"]))
     lines = inject_by_cnpj(lines, "A", dict(a_map), log)
 
-    # Bloco C
+    # Bloco C — C100/C170 (NF-e) e C500/C501/C505 (energia/comunicação/gás/água)
+    # Ambos injetados dentro do C010 do estabelecimento correspondente
     c_map = defaultdict(list)
     for g in agrupar_por_doc(filter_periodo(planilha.get("C100_C170", []), periodo)).values():
         c_map[g["cnpj"]].extend(build_c_block(g["rows"]))
+    for r in filter_periodo(planilha.get("C500_C501_C505", []), periodo):
+        cnpj = gc(r, "CNPJ_ESTAB")
+        if cnpj:
+            c_map[cnpj].extend(build_c500_block(r))
     lines = inject_by_cnpj(lines, "C", dict(c_map), log)
 
     # Bloco D
