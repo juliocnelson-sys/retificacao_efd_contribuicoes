@@ -287,6 +287,10 @@ def build_a_block(grupo: list) -> list:
     vl_cof    = soma_valores(*[r.get("VL_COFINS_ITEM", 0) for r in grupo])
     aliq_pis  = fmt_valor_sped(r0.get("ALIQ_PIS_ITEM", ""))
     aliq_cof  = fmt_valor_sped(r0.get("ALIQ_COFINS_ITEM", ""))
+    # Layout A100: 21 campos conforme Manual EFD Contribuicoes
+    # REG|IND_OPER|IND_EMIT|COD_PART|COD_MOD|COD_SIT|SER|SUB|NUM_DOC|CHV_DOC|
+    # DT_DOC|DT_EXE_SERV|VL_DOC|IND_PGTO|VL_DESC|VL_BC_PIS|ALIQ_PIS|VL_PIS|
+    # VL_BC_COFINS|ALIQ_COFINS|VL_COFINS
     lines = [to_pipe(["A100",
         gc(r0,"IND_OPER"), gc(r0,"IND_EMIT"), gc(r0,"COD_PART\n(Fornecedor/Cliente)"),
         gc(r0,"COD_MOD"), gc(r0,"COD_SIT"), gc(r0,"SER"), gc(r0,"SUB"),
@@ -295,8 +299,7 @@ def build_a_block(grupo: list) -> list:
         fmt_data(r0.get("DT_EXE_SERV","")),
         fmt_br(vl_doc), gc(r0,"IND_PGTO"), fmt_br(vl_desc),
         fmt_br(vl_bc_pis), aliq_pis, fmt_br(vl_pis),
-        fmt_br(vl_bc_cof), aliq_cof, fmt_br(vl_cof),
-        gc(r0,"COD_CTA"), gc(r0,"COD_MUN")])]
+        fmt_br(vl_bc_cof), aliq_cof, fmt_br(vl_cof)])]
     for i, r in enumerate(grupo, 1):
         lines.append(to_pipe(["A170", str(i), gc(r,"COD_ITEM"), gc(r,"DESCR_COMPL"),
             fmt_valor_sped(r.get("VL_ITEM","")), fmt_valor_sped(r.get("VL_DESC_ITEM","")),
@@ -453,44 +456,72 @@ def build_f130(r):
 # ─────────────────────────────────────────────────────────────────────────────
 def recalc_totalizadores(lines: list) -> list:
     """
-    Recalcula todos os registros totalizadores de quantidade de linhas:
-    - 0990: total de linhas do bloco 0 (incluindo o proprio 0990)
-    - A990: total de linhas do bloco A (incluindo o proprio A990)
-    - C990: total de linhas do bloco C (incluindo o proprio C990)
-    - D990: total de linhas do bloco D (incluindo o proprio D990)
-    - F990: total de linhas do bloco F (incluindo o proprio F990)
-    - 9990: total de linhas do bloco 9 (incluindo o proprio 9990)
+    Recalcula os registros X990 de cada bloco (0990, A990, C990, D990, F990, etc).
+    
+    Regra do Manual EFD Contribuicoes:
+    - X990 contem o total de linhas do bloco incluindo o proprio X990
+    - Cada bloco eh delimitado pelo X001 (abertura) e X990 (encerramento)
+    - O bloco 9 e calculado separadamente pelo recalc_9900
+    
+    Algoritmo: para cada bloco, conta as linhas entre X001 e X990 inclusive.
     """
-    # Conta linhas por bloco
-    contadores = defaultdict(int)
-    bloco_atual = None
-    for line in lines:
+    # Mapeia posicao de cada X001 e X990
+    # Estrutura: {bloco: (idx_001, idx_990)}
+    blocos = {}
+    for i, line in enumerate(lines):
         ls = line.strip()
         if not ls.startswith("|"):
             continue
         reg = parse_pipe(ls)[0]
         if not reg:
             continue
-        # Identifica bloco pelo primeiro caractere do registro
-        if reg[0].isdigit():
-            bloco_atual = "0" if reg[0] == "0" else reg[0]
-        elif reg[0].isalpha():
-            bloco_atual = reg[0].upper()
-        if bloco_atual:
-            contadores[bloco_atual] += 1
+        # X001 = abertura do bloco (ex: A001, C001, D001, F001, 0001)
+        if len(reg) == 4 and reg.endswith("001"):
+            bloco = reg[0]
+            if bloco not in blocos:
+                blocos[bloco] = {"ini": i, "fim": None}
+        # 0000 = primeiro registro do bloco 0 (sem X001 proprio)
+        if reg == "0000" and "0" not in blocos:
+            blocos["0"] = {"ini": i, "fim": None}
+        # X990 = encerramento do bloco
+        if len(reg) == 4 and reg.endswith("990"):
+            bloco = reg[0]
+            if bloco in blocos:
+                blocos[bloco]["fim"] = i
+            else:
+                blocos[bloco] = {"ini": None, "fim": i}
 
-    # Atualiza cada totalizador X990 nas linhas
+    # Calcula contagem real de cada bloco (ini ate fim inclusive)
+    contadores = {}
+    for bloco, pos in blocos.items():
+        if pos["ini"] is not None and pos["fim"] is not None:
+            # Conta todas as linhas de registro entre abertura e fechamento
+            count = 0
+            for i in range(pos["ini"], pos["fim"] + 1):
+                if lines[i].strip().startswith("|"):
+                    count += 1
+            contadores[bloco] = count
+        elif pos["fim"] is not None:
+            # Sem X001 (bloco 0): conta do inicio ate o X990
+            count = 0
+            for i in range(0, pos["fim"] + 1):
+                if lines[i].strip().startswith("|"):
+                    count += 1
+            contadores[bloco] = count
+
+    # Atualiza as linhas X990 com o valor correto
     result = []
     for line in lines:
         ls = line.strip()
-        if ls.startswith("|") and ls.endswith("990|") or ("|" in ls and "990|" in ls):
+        if ls.startswith("|"):
             f = parse_pipe(ls)
             reg = f[0] if f else ""
-            if reg.endswith("990") and len(reg) == 4:
-                bloco = reg[0].upper()
-                total = contadores.get(bloco, 0) + 1  # +1 inclui o proprio X990
-                result.append(to_pipe([reg, str(total)]))
-                continue
+            # Nao recalcula 9990 aqui (feito pelo recalc_9900)
+            if len(reg) == 4 and reg.endswith("990") and reg != "9990":
+                bloco = reg[0]
+                if bloco in contadores:
+                    result.append(to_pipe([reg, str(contadores[bloco])]))
+                    continue
         result.append(line)
     return result
 
@@ -510,14 +541,26 @@ def recalc_9900(lines: list) -> list:
             reg = parse_pipe(ls)[0]
             counter[reg] += 1
     counter["9001"] = 1
-    bloco9 = ["|9001|0|\n"]
+    # Monta registros 9900 (um por tipo de registro)
+    linhas_9900 = []
     for reg in sorted(counter.keys()):
-        bloco9.append(f"|9900|{reg}|{counter[reg]}|\n")
-    bloco9.append(f"|9900|9900|{len(bloco9)}|\n")
-    bloco9.append("|9900|9990|1|\n")
-    bloco9.append("|9900|9999|1|\n")
-    bloco9.append("|9990|1|\n")
-    bloco9.append(f"|9999|{len(new_lines) + len(bloco9) + 1}|\n")
+        linhas_9900.append(f"|9900|{reg}|{counter[reg]}|\n")
+    # Quantidade de linhas 9900 inclui o proprio |9900|9900|...|
+    n_9900 = len(linhas_9900) + 1
+    linhas_9900.append(f"|9900|9900|{n_9900}|\n")
+    linhas_9900.append("|9900|9990|1|\n")
+    linhas_9900.append("|9900|9999|1|\n")
+
+    # Bloco 9: 9001 + todos os 9900 + 9990 + 9999
+    # 9990 conta todas as linhas do bloco 9 incluindo ele mesmo
+    n_bloco9 = 1 + len(linhas_9900) + 1 + 1  # 9001 + 9900s + 9990 + 9999
+    bloco9 = ["|9001|0|\n"]
+    bloco9.extend(linhas_9900)
+    bloco9.append(f"|9990|{n_bloco9}|\n")
+
+    # 9999: total geral de linhas do arquivo incluindo o proprio 9999
+    total_arquivo = len(new_lines) + len(bloco9) + 1
+    bloco9.append(f"|9999|{total_arquivo}|\n")
     return new_lines + bloco9
 
 def find_x010_ranges(lines: list, prefix: str) -> dict:
