@@ -116,36 +116,59 @@ def fmt_data(v) -> str:
     return s  # retorna como está se não reconhecido
 
 def fmt_valor_sped(v) -> str:
-    """Formata valor numerico para o padrao SPED: decimal com virgula, SEM ponto de milhar.
-    Ex: 1234567.89 -> '1234567,89'  |  '1.234.567,89' -> '1234567,89'
     """
-    if v is None or str(v).strip() in ("", "None", "0,00", "0.00"):
+    Formata valor numerico para o padrao SPED:
+      - Decimal com virgula
+      - SEM ponto separador de milhar
+      - Sempre 2 casas decimais
+    
+    Aceita: float/int do Excel, strings BR ('1.234,56'), strings EN ('1234.56')
+    Retorna: '1234,56'
+    """
+    if v is None:
         return "0,00"
+    
+    # Tipos numericos do Python/Excel: int ou float -> formata direto
+    if isinstance(v, (int, float)):
+        return f"{v:.2f}".replace(".", ",")
+    
     s = str(v).strip()
-    # Remove ponto de milhar: '1.234.567,89' -> '1234567,89'
-    # Detecta se ha virgula como decimal (padrao BR) ou ponto (padrao EN)
+    
+    if s in ("", "None", "← script"):
+        return "0,00"
+    
+    # String com virgula E ponto -> formato BR com milhar: '1.234,56'
     if "," in s and "." in s:
-        # Ex: '1.234,56' (BR) ou '1,234.56' (EN)
         if s.rfind(",") > s.rfind("."):
-            # virgula eh decimal: remove pontos de milhar
-            s = s.replace(".", "")
+            # virgula = decimal, pontos = milhar -> remove pontos
+            s = s.replace(".", "").replace(",", ".")
         else:
-            # ponto eh decimal: remove virgulas de milhar, troca ponto por virgula
-            s = s.replace(",", "").replace(".", ",")
-    elif "." in s:
-        # so ponto: pode ser decimal EN ou milhar (sem virgula)
-        # Se tem mais de 3 digitos apos o ponto, eh milhar (ex: 1.000 = 1000)
-        parts = s.split(".")
-        if len(parts[-1]) == 3 and len(parts) > 1:
-            # ponto de milhar
-            s = s.replace(".", "") + ",00"
-        else:
-            # decimal EN
-            s = s.replace(".", ",")
-    # Garante 2 casas decimais
-    if "," not in s:
-        s += ",00"
-    return s
+            # ponto = decimal, virgulas = milhar -> remove virgulas
+            s = s.replace(",", "")
+        try:
+            return f"{float(s):.2f}".replace(".", ",")
+        except ValueError:
+            return "0,00"
+    
+    # String apenas com virgula -> decimal BR: '1234,56'
+    if "," in s:
+        try:
+            return f"{float(s.replace(',', '.')):.2f}".replace(".", ",")
+        except ValueError:
+            return "0,00"
+    
+    # String apenas com ponto -> decimal EN: '1234.56'
+    if "." in s:
+        try:
+            return f"{float(s):.2f}".replace(".", ",")
+        except ValueError:
+            return "0,00"
+    
+    # String sem separador: '1234'
+    try:
+        return f"{float(s):.2f}".replace(".", ",")
+    except ValueError:
+        return "0,00"
 
 def gc(row: dict, *keys) -> str:
     for k in keys:
