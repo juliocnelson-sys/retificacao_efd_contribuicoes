@@ -291,15 +291,21 @@ def build_a_block(grupo: list) -> list:
     # REG|IND_OPER|IND_EMIT|COD_PART|COD_MOD|COD_SIT|SER|SUB|NUM_DOC|CHV_DOC|
     # DT_DOC|DT_EXE_SERV|VL_DOC|IND_PGTO|VL_DESC|VL_BC_PIS|ALIQ_PIS|VL_PIS|
     # VL_BC_COFINS|ALIQ_COFINS|VL_COFINS
+    # Layout A100 conforme Manual EFD Contribuicoes v1.35:
+    # REG|IND_OPER|IND_EMIT|COD_PART|COD_SIT|SER|SUB|NUM_DOC|CHV_NFSE|
+    # DT_DOC|DT_EXE_SERV|VL_DOC|IND_PGTO|VL_DESC|VL_BC_PIS|VL_PIS|
+    # VL_BC_COFINS|VL_COFINS|VL_PIS_RET|VL_COFINS_RET|VL_ISS
+    # NOTA: A100 NAO tem COD_MOD nem ALIQ_PIS nem ALIQ_COFINS
     lines = [to_pipe(["A100",
         gc(r0,"IND_OPER"), gc(r0,"IND_EMIT"), gc(r0,"COD_PART\n(Fornecedor/Cliente)"),
-        gc(r0,"COD_MOD"), gc(r0,"COD_SIT"), gc(r0,"SER"), gc(r0,"SUB"),
+        gc(r0,"COD_SIT"), gc(r0,"SER"), gc(r0,"SUB"),
         gc(r0,"NUM_DOC"), gc(r0,"CHV_DOC"),
         fmt_data(r0.get("DT_DOC","")),
         fmt_data(r0.get("DT_EXE_SERV","")),
         fmt_br(vl_doc), gc(r0,"IND_PGTO"), fmt_br(vl_desc),
-        fmt_br(vl_bc_pis), aliq_pis, fmt_br(vl_pis),
-        fmt_br(vl_bc_cof), aliq_cof, fmt_br(vl_cof)])]
+        fmt_br(vl_bc_pis), fmt_br(vl_pis),
+        fmt_br(vl_bc_cof), fmt_br(vl_cof),
+        "0,00", "0,00", "0,00"])]
     for i, r in enumerate(grupo, 1):
         lines.append(to_pipe(["A170", str(i), gc(r,"COD_ITEM"), gc(r,"DESCR_COMPL"),
             fmt_valor_sped(r.get("VL_ITEM","")), fmt_valor_sped(r.get("VL_DESC_ITEM","")),
@@ -362,6 +368,9 @@ def build_c500_block(row) -> list:
     vl_pis    = gc(row, "VL_PIS_501")
     vl_cofins = gc(row, "VL_COFINS_505")
 
+    # Layout C500 conforme Manual EFD Contribuicoes v1.35:
+    # REG|COD_PART|COD_MOD|COD_SIT|COD_SIT_ESP|IND_EMIT|NUM_DOC|
+    # DT_DOC|DT_ENT|VL_DOC|VL_ICMS|COD_INF|VL_PIS|VL_COFINS|CHV_DOCe
     c500 = to_pipe(["C500",
         gc(row, "COD_PART"),
         gc(row, "COD_MOD"),
@@ -369,31 +378,33 @@ def build_c500_block(row) -> list:
         gc(row, "COD_SIT_ESP"),
         gc(row, "IND_EMIT"),
         gc(row, "NUM_DOC"),
-        gc(row, "DT_DOC"),
-        gc(row, "DT_ENT"),
-        fmt_valor(row.get("VL_DOC", "")),
-        fmt_valor(row.get("VL_DESC", "")),
-        fmt_valor(row.get("VL_MERC", "")),
-        fmt_valor(vl_pis),
-        fmt_valor(vl_cofins),
+        fmt_data(row.get("DT_DOC", "")),
+        fmt_data(row.get("DT_ENT", "")),
+        fmt_valor_sped(row.get("VL_DOC", "")),
+        fmt_valor_sped(row.get("VL_ICMS", "")),
+        gc(row, "COD_INF"),
+        fmt_valor_sped(vl_pis),
+        fmt_valor_sped(vl_cofins),
         gc(row, "CHV_DOCe"),
     ])
+    # Layout C501: REG|CST_PIS|VL_ITEM|NAT_BC_CRED|VL_BC_PIS|ALIQ_PIS|VL_PIS|COD_CTA
     c501 = to_pipe(["C501",
         gc(row, "CST_PIS"),
-        fmt_valor(row.get("VL_BC_PIS", "")),
+        fmt_valor_sped(row.get("VL_ITEM_C501", row.get("VL_BC_PIS", ""))),
         gc(row, "NAT_BC_CRED"),
-        fmt_valor(row.get("VL_BC_PIS_2", "")),
-        fmt_valor(row.get("ALIQ_PIS", "")),
-        fmt_valor(vl_pis),
+        fmt_valor_sped(row.get("VL_BC_PIS", "")),
+        fmt_valor_sped(row.get("ALIQ_PIS", "")),
+        fmt_valor_sped(vl_pis),
         gc(row, "COD_CTA_501"),
     ])
+    # Layout C505: REG|CST_COFINS|VL_ITEM|NAT_BC_CRED|VL_BC_COFINS|ALIQ_COFINS|VL_COFINS|COD_CTA
     c505 = to_pipe(["C505",
         gc(row, "CST_COFINS"),
-        fmt_valor(row.get("VL_BC_COFINS", "")),
+        fmt_valor_sped(row.get("VL_ITEM_C505", row.get("VL_BC_COFINS", ""))),
         gc(row, "NAT_BC_CRED"),
-        fmt_valor(row.get("VL_BC_COFINS_2", "")),
-        fmt_valor(row.get("ALIQ_COFINS", "")),
-        fmt_valor(vl_cofins),
+        fmt_valor_sped(row.get("VL_BC_COFINS", "")),
+        fmt_valor_sped(row.get("ALIQ_COFINS", "")),
+        fmt_valor_sped(vl_cofins),
         gc(row, "COD_CTA_505"),
     ])
     return [c500, c501, c505]
@@ -420,35 +431,84 @@ def build_d_block(r) -> list:
     ]
 
 def build_f100(r):
-    return to_pipe(["F100", gc(r,"IND_OPER"), gc(r,"COD_PART"), gc(r,"DT_OPER"),
-        fmt_valor(r.get("VL_OPER","")), gc(r,"COD_ITEM"), gc(r,"DES_COMPL"), gc(r,"COD_CTA"),
-        gc(r,"CST_PIS"), fmt_valor(r.get("VL_BC_PIS","")), fmt_valor(r.get("ALIQ_PIS_%","")),
-        fmt_valor(r.get("QUANT_BC_PIS","")), fmt_valor(r.get("ALIQ_PIS_R$","")),
-        fmt_valor(r.get("VL_PIS","")), gc(r,"CST_COFINS"), fmt_valor(r.get("VL_BC_COFINS","")),
-        fmt_valor(r.get("ALIQ_COFINS_%","")), fmt_valor(r.get("QUANT_BC_COF","")),
-        fmt_valor(r.get("ALIQ_COFINS_R$","")), fmt_valor(r.get("VL_COFINS","")),
-        gc(r,"NAT_BC_CRED"), gc(r,"IND_ORIG_CRED"), gc(r,"COD_CCUS"), gc(r,"COD_MOD"), gc(r,"GRUPO_TENSAO")])
+    # Layout F100 conforme Manual EFD Contribuicoes v1.35 (19 campos):
+    # REG|IND_OPER|COD_PART|COD_ITEM|DT_OPER|VL_OPER|CST_PIS|VL_BC_PIS|ALIQ_PIS|VL_PIS|
+    # CST_COFINS|VL_BC_COFINS|ALIQ_COFINS|VL_COFINS|NAT_BC_CRED|IND_ORIG_CRED|
+    # COD_CTA|COD_CCUS|DESC_DOC_OPER
+    return to_pipe(["F100",
+        gc(r,"IND_OPER"),
+        gc(r,"COD_PART"),
+        gc(r,"COD_ITEM"),
+        fmt_data(r.get("DT_OPER","")),
+        fmt_valor_sped(r.get("VL_OPER","")),
+        gc(r,"CST_PIS"),
+        fmt_valor_sped(r.get("VL_BC_PIS","")),
+        fmt_valor_sped(r.get("ALIQ_PIS_%", r.get("ALIQ_PIS",""))),
+        fmt_valor_sped(r.get("VL_PIS","")),
+        gc(r,"CST_COFINS"),
+        fmt_valor_sped(r.get("VL_BC_COFINS","")),
+        fmt_valor_sped(r.get("ALIQ_COFINS_%", r.get("ALIQ_COFINS",""))),
+        fmt_valor_sped(r.get("VL_COFINS","")),
+        gc(r,"NAT_BC_CRED"),
+        gc(r,"IND_ORIG_CRED"),
+        gc(r,"COD_CTA"),
+        gc(r,"COD_CCUS"),
+        gc(r,"DES_COMPL"),
+    ])
 
 def build_f120(r):
-    return to_pipe(["F120", gc(r,"NAT_BC_CRED"), gc(r,"IDENT_BEM_IMOB"), gc(r,"IND_ORIG_CRED"),
-        gc(r,"IND_UTIL_BEM_IMOB"), fmt_valor(r.get("VL_OPER_DEP","")), fmt_valor(r.get("PARC_NAO_BC","")),
-        gc(r,"CST_PIS"), fmt_valor(r.get("VL_BC_PIS","")), fmt_valor(r.get("ALIQ_PIS_%","")),
-        fmt_valor(r.get("QUANT_BC_PIS","")), fmt_valor(r.get("ALIQ_PIS_R$","")),
-        fmt_valor(r.get("VL_PIS","")), gc(r,"CST_COFINS"), fmt_valor(r.get("VL_BC_COFINS","")),
-        fmt_valor(r.get("ALIQ_COFINS_%","")), fmt_valor(r.get("QUANT_BC_COF","")),
-        fmt_valor(r.get("ALIQ_COFINS_R$","")), fmt_valor(r.get("VL_COFINS","")),
-        gc(r,"COD_CTA"), gc(r,"COD_CCUS"), gc(r,"DES_COMPL"), gc(r,"COD_MOD")])
+    # Layout F120 conforme Manual EFD Contribuicoes v1.35 (18 campos):
+    # REG|NAT_BC_CRED|IDENT_BEM_IMOB|IND_ORIG_CRED|IND_UTIL_BEM_IMOB|
+    # VL_OPER_DEP|PARC_OPER_NAO_BC_CRED|CST_PIS|VL_BC_PIS|ALIQ_PIS|VL_PIS|
+    # CST_COFINS|VL_BC_COFINS|ALIQ_COFINS|VL_COFINS|COD_CTA|COD_CCUS|DESC_BEM_IMOB
+    return to_pipe(["F120",
+        gc(r,"NAT_BC_CRED"),
+        gc(r,"IDENT_BEM_IMOB"),
+        gc(r,"IND_ORIG_CRED"),
+        gc(r,"IND_UTIL_BEM_IMOB"),
+        fmt_valor_sped(r.get("VL_OPER_DEP","")),
+        fmt_valor_sped(r.get("PARC_NAO_BC", r.get("PARC_OPER_NAO_BC_CRED",""))),
+        gc(r,"CST_PIS"),
+        fmt_valor_sped(r.get("VL_BC_PIS","")),
+        fmt_valor_sped(r.get("ALIQ_PIS_%", r.get("ALIQ_PIS",""))),
+        fmt_valor_sped(r.get("VL_PIS","")),
+        gc(r,"CST_COFINS"),
+        fmt_valor_sped(r.get("VL_BC_COFINS","")),
+        fmt_valor_sped(r.get("ALIQ_COFINS_%", r.get("ALIQ_COFINS",""))),
+        fmt_valor_sped(r.get("VL_COFINS","")),
+        gc(r,"COD_CTA"),
+        gc(r,"COD_CCUS"),
+        gc(r,"DES_COMPL"),
+    ])
 
 def build_f130(r):
-    return to_pipe(["F130", gc(r,"NAT_BC_CRED"), gc(r,"IDENT_BEM_IMOB"), gc(r,"IND_ORIG_CRED"),
-        gc(r,"IND_UTIL_BEM_IMOB"), gc(r,"MES_OPER_AQUIS"), fmt_valor(r.get("VL_OPER_AQUIS","")),
-        fmt_valor(r.get("PARC_NAO_BC","")), fmt_valor(r.get("VL_BC_CRED","")), gc(r,"IND_NR_PARC"),
-        gc(r,"CST_PIS"), fmt_valor(r.get("VL_BC_PIS","")), fmt_valor(r.get("ALIQ_PIS_%","")),
-        fmt_valor(r.get("QUANT_BC_PIS","")), fmt_valor(r.get("ALIQ_PIS_R$","")),
-        fmt_valor(r.get("VL_PIS","")), gc(r,"CST_COFINS"), fmt_valor(r.get("VL_BC_COFINS","")),
-        fmt_valor(r.get("ALIQ_COFINS_%","")), fmt_valor(r.get("QUANT_BC_COF","")),
-        fmt_valor(r.get("ALIQ_COFINS_R$","")), fmt_valor(r.get("VL_COFINS","")),
-        gc(r,"COD_CTA"), gc(r,"COD_CCUS"), gc(r,"DES_COMPL"), gc(r,"COD_MOD")])
+    # Layout F130 conforme Manual EFD Contribuicoes v1.35 (21 campos):
+    # REG|NAT_BC_CRED|IDENT_BEM_IMOB|IND_ORIG_CRED|IND_UTIL_BEM_IMOB|
+    # MES_OPER_AQUIS|VL_OPER_AQUIS|PARC_OPER_NAO_BC_CRED|VL_BC_CRED|IND_NR_PARC|
+    # CST_PIS|VL_BC_PIS|ALIQ_PIS|VL_PIS|CST_COFINS|VL_BC_COFINS|ALIQ_COFINS|VL_COFINS|
+    # COD_CTA|COD_CCUS|DESC_BEM_IMOB
+    return to_pipe(["F130",
+        gc(r,"NAT_BC_CRED"),
+        gc(r,"IDENT_BEM_IMOB"),
+        gc(r,"IND_ORIG_CRED"),
+        gc(r,"IND_UTIL_BEM_IMOB"),
+        gc(r,"MES_OPER_AQUIS"),
+        fmt_valor_sped(r.get("VL_OPER_AQUIS","")),
+        fmt_valor_sped(r.get("PARC_NAO_BC", r.get("PARC_OPER_NAO_BC_CRED",""))),
+        fmt_valor_sped(r.get("VL_BC_CRED","")),
+        gc(r,"IND_NR_PARC"),
+        gc(r,"CST_PIS"),
+        fmt_valor_sped(r.get("VL_BC_PIS","")),
+        fmt_valor_sped(r.get("ALIQ_PIS_%", r.get("ALIQ_PIS",""))),
+        fmt_valor_sped(r.get("VL_PIS","")),
+        gc(r,"CST_COFINS"),
+        fmt_valor_sped(r.get("VL_BC_COFINS","")),
+        fmt_valor_sped(r.get("ALIQ_COFINS_%", r.get("ALIQ_COFINS",""))),
+        fmt_valor_sped(r.get("VL_COFINS","")),
+        gc(r,"COD_CTA"),
+        gc(r,"COD_CCUS"),
+        gc(r,"DES_COMPL"),
+    ])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
