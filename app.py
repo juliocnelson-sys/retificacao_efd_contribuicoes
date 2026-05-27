@@ -365,8 +365,17 @@ def build_0400(r):
     return to_pipe(["0400", gc(r,"COD_NAT_REC"), gc(r,"DESCR_NAT_REC")])
 
 def build_0500(r):
-    return to_pipe(["0500", gc(r,"DT_ALT"), gc(r,"COD_CTA"), gc(r,"NÍVEL"),
-                    gc(r,"IND_CTA"), gc(r,"NOME_CTA"), gc(r,"COD_CTA_SUP"), gc(r,"COD_CTA_REF"), ""])
+    # Layout 0500: REG|DT_ALT|COD_CTA|NÍVEL|IND_CTA|NOME_CTA|COD_CTA_SUP|COD_CTA_REF
+    # 8 campos conforme Manual EFD Contribuicoes v1.35 (sem CTA_COSIF)
+    return to_pipe(["0500",
+        fmt_data(r.get("DT_ALT", "")),
+        gc(r, "COD_CTA"),
+        str(r.get("NÍVEL", r.get("NIVEL", ""))).strip(),
+        gc(r, "IND_CTA"),
+        gc(r, "NOME_CTA"),
+        gc(r, "COD_CTA_SUP"),
+        gc(r, "COD_CTA_REF"),
+    ])
 
 def build_a_block(grupo: list) -> list:
     # Layout A100 do Manual EFD Contribuicoes: 21 campos
@@ -508,7 +517,7 @@ def build_d_block(r) -> list:
     return [
         to_pipe(["D100", gc(r,"IND_OPER"), gc(r,"IND_EMIT"), gc(r,"COD_PART\n(Transportadora)"),
             gc(r,"COD_MOD"), gc(r,"COD_SIT"), gc(r,"SER"), gc(r,"SUB"), gc(r,"NUM_DOC"),
-            gc(r,"CHV_CTE"), gc(r,"DT_DOC"), gc(r,"DT_A_P"), gc(r,"TP_CT_e"), gc(r,"CHV_CTE_REF"),
+            gc(r,"CHV_CTE"), fmt_data(r.get("DT_DOC","")), fmt_data(r.get("DT_A_P","")), gc(r,"TP_CT_e"), gc(r,"CHV_CTE_REF"),
             fmt_valor(r.get("VL_DOC","")), fmt_valor(r.get("VL_DESC","")), gc(r,"IND_FRT"),
             fmt_valor(r.get("VL_SERV","")), fmt_valor(r.get("VL_BC_ICMS","")),
             fmt_valor(r.get("VL_ICMS","")), fmt_valor(r.get("VL_NT","")),
