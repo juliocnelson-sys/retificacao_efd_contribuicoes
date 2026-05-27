@@ -181,42 +181,86 @@ def gc(row: dict, *keys) -> str:
 # Leitura da planilha
 # ─────────────────────────────────────────────────────────────────────────────
 def sheet_to_dicts(ws) -> list:
-    # Detecta automaticamente a linha de cabecalho real.
-    # Abas com grupos coloridos (A100, C100, D100) tem 3 linhas de cabecalho.
-    # Abas simples (0150, F100 etc.) tem 2 linhas de cabecalho.
-    # Busca a primeira linha que contenha campos reconheciveis.
-    CAMPOS_ANCORA = {
-        'CNPJ_ESTAB', 'PERIODO', 'COD_PART', 'COD_ITEM',
-        'UNID', 'COD_NAT_REC', 'COD_CTA', 'DT_ALT', 'IND_OPER',
-        'IND_EMIT', 'NUM_DOC', 'COD_MOD', 'NAT_BC_CRED', 'COD_SIT',
+    """
+    Le uma aba do Excel e retorna lista de dicts {header: valor}.
+
+    Logica de deteccao de cabecalho:
+    - Abas simples (0150, F100...): linha 1 = titulo, linha 2 = cabecalho, linha 3+ = dados
+    - Abas com grupos coloridos (A100, C100, D100, C500...):
+        linha 1 = titulo, linha 2 = grupos coloridos, linha 3 = cabecalho real, linha 4+ = dados
+
+    Para as abas com grupos, a linha 2 tem textos como "IDENTIFICACAO",
+    "A100 - CABECALHO", etc., e a linha 3 tem os nomes reais dos campos
+    como CNPJ_ESTAB, NUM_DOC, VL_ITEM etc.
+
+    Estrategia: usa a linha de cabecalho como aquela que contiver CNPJ_ESTAB
+    ou o maior numero de campos reconheciveis do layout SPED.
+    Ignora linhas que sejam apenas descricoes de grupo (sem campos SPED).
+    """
+    CAMPOS_SPED = {
+        'CNPJ_ESTAB', 'IND_OPER', 'IND_EMIT', 'COD_PART', 'COD_SIT',
+        'NUM_DOC', 'DT_DOC', 'VL_DOC', 'IND_PGTO', 'CST_PIS',
+        'CST_COFINS', 'COD_ITEM', 'VL_ITEM', 'NUM_ITEM', 'UNID',
+        'COD_NAT_REC', 'COD_CTA', 'DT_ALT', 'NAT_BC_CRED', 'COD_MOD',
+        'VL_BC_PIS', 'VL_PIS', 'VL_BC_COFINS', 'VL_COFINS', 'ALIQ_PIS',
+        'COD_PART\n(Fornecedor/Cliente)', 'COD_PART\n(Transportadora)',
+        'PERÍODO\n(MMAAAA)',
     }
+
     all_rows = list(ws.iter_rows(values_only=True))
     if not all_rows:
         return []
 
-    header_idx = None
-    for i, row in enumerate(all_rows):
-        vals = set()
-        for v in row:
-            if v is not None:
-                s = str(v).strip().split('\n')[0].strip()
-                vals.add(s)
-        if vals & CAMPOS_ANCORA:
-            header_idx = i
-            break
+    # Conta quantos campos SPED cada linha contem
+    # A linha com maior contagem e o cabecalho real
+    best_idx = None
+    best_score = 0
 
-    if header_idx is None:
+    for i, row in enumerate(all_rows):
+        score = 0
+        for v in row:
+            if v is None:
+                continue
+            # Pega o texto da celula (primeira linha se tiver \n)
+            s = str(v).strip()
+            # Verifica se e um campo SPED conhecido
+            if s in CAMPOS_SPED:
+                score += 2  # match exato vale mais
+            elif s.split('\n')[0].strip() in CAMPOS_SPED:
+                score += 2
+            elif any(campo in s for campo in CAMPOS_SPED):
+                score += 1
+        if score > best_score:
+            best_score = score
+            best_idx = i
+
+    if best_idx is None or best_score == 0:
         return []
 
-    headers = [str(c).strip() if c else f"COL{j}"
-               for j, c in enumerate(all_rows[header_idx])]
+    # Monta dicionario de cabecalhos usando o texto completo da celula
+    headers = []
+    for v in all_rows[best_idx]:
+        if v is None:
+            headers.append(None)
+        else:
+            headers.append(str(v).strip())
 
     rows = []
-    for row in all_rows[header_idx + 1:]:
+    for row in all_rows[best_idx + 1:]:
+        # Pula linhas completamente vazias
         if all(c is None for c in row):
             continue
-        rows.append({headers[j]: (row[j] if row[j] is not None else "")
-                     for j in range(len(headers))})
+        # Pula linhas que sao apenas linha de exemplo com "← script"
+        non_empty = [c for c in row if c is not None and str(c).strip() != '']
+        if all(str(c).strip() == '← script' for c in non_empty):
+            continue
+        # Monta dict somente para colunas com cabecalho valido
+        d = {}
+        for j, (h, v) in enumerate(zip(headers, row)):
+            if h is not None:
+                d[h] = v if v is not None else ''
+        if d:
+            rows.append(d)
     return rows
 
 @st.cache_data(show_spinner=False)
@@ -663,28 +707,70 @@ def find_x010_ranges(lines: list, prefix: str) -> dict:
     return ranges
 
 def inject_by_cnpj(lines: list, prefix: str, cnpj_map: dict, log_lines: list) -> list:
-    offset = 0
+    """
+    Injeta registros dentro do sub-bloco X010 de cada estabelecimento.
+
+    Regra fundamental: o CNPJ_ESTAB da planilha determina em qual
+    sub-bloco X010 o registro sera inserido. Nunca mistura registros
+    de estabelecimentos diferentes.
+
+    Algoritmo: processa as insercoes em ordem DECRESCENTE de posicao.
+    Isso garante que cada insercao nao desloca as posicoes das
+    insercoes subsequentes (que estao em posicoes menores).
+    """
     ranges = find_x010_ranges(lines, prefix)
+
+    # Monta lista de (posicao, cnpj, linhas) e ordena por posicao DECRESCENTE
+    insercoes = []
     for cnpj, novas in cnpj_map.items():
         if not novas:
             continue
         if cnpj not in ranges:
             log_lines.append(f"⚠ CNPJ {cnpj} sem {prefix}010 no TXT — pulando")
             continue
-        pos = ranges[cnpj] + offset
+        insercoes.append((ranges[cnpj], cnpj, novas))
+
+    # Ordena por posicao decrescente: insere do fim para o inicio
+    # Assim cada insercao nao afeta as posicoes das anteriores
+    insercoes.sort(key=lambda x: x[0], reverse=True)
+
+    for pos, cnpj, novas in insercoes:
         lines[pos:pos] = novas
-        offset += len(novas)
         log_lines.append(f"✔ Bloco {prefix}: {len(novas)} linha(s) → CNPJ {cnpj}")
+
     return lines
 
 def agrupar_por_doc(rows: list) -> dict:
+    """
+    Agrupa linhas de itens por documento fiscal.
+
+    Chave de agrupamento:
+      CNPJ_ESTAB + PERIODO + NUM_DOC + COD_PART + CHV_DOC
+
+    O CNPJ_ESTAB e a chave principal — cada documento e inserido
+    SOMENTE no sub-bloco do estabelecimento correto (A010/C010/D010).
+
+    COD_PART e CHV_DOC entram na chave para evitar mistura entre
+    documentos de fornecedores diferentes que tenham o mesmo numero
+    de NF (situacao comum em multi-estabelecimentos).
+    """
     grupos = {}
     for row in rows:
-        cnpj  = gc(row, "CNPJ_ESTAB")
-        ndoc  = gc(row, "NUM_DOC")
+        cnpj     = gc(row, "CNPJ_ESTAB")
+        periodo  = str(gc(row, "PERÍODO\n(MMAAAA)", "PERÍODO", "PERIODO")).strip()
+        ndoc     = str(gc(row, "NUM_DOC")).strip()
+        cod_part = str(gc(row,
+                         "COD_PART\n(Fornecedor/Cliente)",
+                         "COD_PART\n(Transportadora)",
+                         "COD_PART")).strip()
+        chv      = str(gc(row, "CHV_DOC", "CHV_NFE", "CHV_NFSE", "CHV_CTE")).strip()
+
         if not cnpj or not ndoc:
             continue
-        key = f"{cnpj}||{ndoc}"
+
+        # Chave: CNPJ + periodo + numero doc + fornecedor + chave eletronica
+        key = f"{cnpj}||{periodo}||{ndoc}||{cod_part}||{chv}"
+
         if key not in grupos:
             grupos[key] = {"cnpj": cnpj, "rows": []}
         grupos[key]["rows"].append(row)
