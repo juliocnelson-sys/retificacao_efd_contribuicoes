@@ -331,11 +331,50 @@ def get_periodo(lines: list) -> str | None:
     return None
 
 def filter_periodo(rows: list, periodo: str | None) -> list:
+    """
+    Filtra linhas pelo período do TXT.
+    Aceita período da planilha nos formatos:
+      - "102021" (MMAAAA string) — match direto
+      - datetime(2021,10,1)      — converte para MMAAAA
+      - "01/10/2021"             — converte para MMAAAA
+      - "2021-10-01"             — converte para MMAAAA
+      - vazio/None               — passa tudo
+    """
+    import datetime as _dt
     if not periodo:
         return rows
+
+    def normalizar_periodo(v) -> str:
+        """Converte qualquer representação de período para MMAAAA."""
+        if v is None or str(v).strip() == "":
+            return ""
+        # datetime ou date do Python/Excel
+        if isinstance(v, (_dt.datetime, _dt.date)):
+            return f"{v.month:02d}{v.year}"
+        s = str(v).strip()
+        # Já está no formato MMAAAA (6 dígitos)
+        if len(s) == 6 and s.isdigit():
+            return s
+        # Formato ISO ou similar: "2021-10-01" ou "2021-10-01 00:00:00"
+        if len(s) >= 10 and s[4] == "-":
+            try:
+                d = _dt.datetime.strptime(s[:10], "%Y-%m-%d")
+                return f"{d.month:02d}{d.year}"
+            except ValueError:
+                pass
+        # Formato dd/mm/aaaa
+        if len(s) >= 10 and s[2] == "/" and s[5] == "/":
+            try:
+                d = _dt.datetime.strptime(s[:10], "%d/%m/%Y")
+                return f"{d.month:02d}{d.year}"
+            except ValueError:
+                pass
+        return s
+
     result = []
     for r in rows:
-        p = str(r.get("PERÍODO\n(MMAAAA)", r.get("PERÍODO", r.get("PERIODO", "")))).strip()
+        raw = r.get("PERÍODO\n(MMAAAA)", r.get("PERÍODO", r.get("PERIODO", "")))
+        p = normalizar_periodo(raw)
         if not p or p == periodo:
             result.append(r)
     return result
@@ -365,13 +404,15 @@ def build_0400(r):
     return to_pipe(["0400", gc(r,"COD_NAT_REC"), gc(r,"DESCR_NAT_REC")])
 
 def build_0500(r):
-    # Layout 0500: REG|DT_ALT|COD_CTA|NÍVEL|IND_CTA|NOME_CTA|COD_CTA_SUP|COD_CTA_REF
-    # 8 campos conforme Manual EFD Contribuicoes v1.35 (sem CTA_COSIF)
+    # Layout 0500 conforme Manual EFD Contribuicoes v1.35 (9 campos):
+    # REG|DT_ALT|COD_NAT_CC|IND_CTA|NIVEL|COD_CTA|NOME_CTA|COD_CTA_SUP|COD_CTA_REF
+    # COD_NAT_CC: 01=Ativo 02=Passivo 03=PL 04=Resultado 05=Compensacao 09=Outras
     return to_pipe(["0500",
         fmt_data(r.get("DT_ALT", "")),
-        gc(r, "COD_CTA"),
-        str(r.get("NÍVEL", r.get("NIVEL", ""))).strip(),
+        gc(r, "COD_NAT_CC", "COD_NAT"),
         gc(r, "IND_CTA"),
+        str(r.get("NÍVEL", r.get("NIVEL", ""))).strip(),
+        gc(r, "COD_CTA"),
         gc(r, "NOME_CTA"),
         gc(r, "COD_CTA_SUP"),
         gc(r, "COD_CTA_REF"),
