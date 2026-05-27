@@ -407,15 +407,48 @@ def build_0500(r):
     # Layout 0500 conforme Manual EFD Contribuicoes v1.35 (9 campos):
     # REG|DT_ALT|COD_NAT_CC|IND_CTA|NIVEL|COD_CTA|NOME_CTA|COD_CTA_SUP|COD_CTA_REF
     # COD_NAT_CC: 01=Ativo 02=Passivo 03=PL 04=Resultado 05=Compensacao 09=Outras
+    # Aceita tanto o nome simples ('DT_ALT') quanto o nome com descricao da planilha
+    # ('DT_ALT\n(DDMMAAAA)') pois a planilha modelo v4 usa nomes compostos
+    def get_campo(row, *bases):
+        """Busca campo pelo nome base ou por qualquer chave que comece com esse nome."""
+        for base in bases:
+            # Tenta match exato primeiro
+            if base in row and str(row[base]).strip() not in ('', 'None'):
+                return str(row[base]).strip()
+            # Tenta match por prefixo (ex: 'DT_ALT' bate em 'DT_ALT\n(DDMMAAAA)')
+            for k, v in row.items():
+                if str(k).split('\n')[0].strip() == base:
+                    if str(v).strip() not in ('', 'None'):
+                        return str(v).strip()
+        return ''
+
+    def get_data_campo(row, *bases):
+        """Busca campo de data aceitando nome simples ou composto."""
+        for base in bases:
+            v = row.get(base, '')
+            if v != '' and v is not None:
+                return fmt_data(v)
+            for k, val in row.items():
+                if str(k).split('\n')[0].strip() == base:
+                    if val not in ('', None):
+                        return fmt_data(val)
+        return ''
+
+    def get_nivel(row):
+        for k, v in row.items():
+            if str(k).split('\n')[0].strip() in ('NÍVEL', 'NIVEL'):
+                return str(v).strip() if v not in ('', None) else ''
+        return str(row.get('NÍVEL', row.get('NIVEL', ''))).strip()
+
     return to_pipe(["0500",
-        fmt_data(r.get("DT_ALT", "")),
-        gc(r, "COD_NAT_CC", "COD_NAT"),
-        gc(r, "IND_CTA"),
-        str(r.get("NÍVEL", r.get("NIVEL", ""))).strip(),
-        gc(r, "COD_CTA"),
-        gc(r, "NOME_CTA"),
-        gc(r, "COD_CTA_SUP"),
-        gc(r, "COD_CTA_REF"),
+        get_data_campo(r, "DT_ALT"),
+        get_campo(r, "COD_NAT_CC", "COD_NAT"),
+        get_campo(r, "IND_CTA"),
+        get_nivel(r),
+        get_campo(r, "COD_CTA"),
+        get_campo(r, "NOME_CTA"),
+        get_campo(r, "COD_CTA_SUP"),
+        get_campo(r, "COD_CTA_REF"),
     ])
 
 def build_a_block(grupo: list) -> list:
