@@ -71,9 +71,37 @@ def fmt_valor(v) -> str:
     return s
 
 def soma_valores(*vals) -> float:
+    """
+    Soma valores numericos vindos do Excel ou de strings BR.
+    Aceita: float/int do Python, strings BR ('28.616,29' ou '28616,29')
+    
+    REGRA: se o valor ja eh float ou int, usa diretamente.
+    Se eh string, normaliza removendo pontos de milhar (antes da virgula)
+    e convertendo virgula decimal para ponto.
+    """
     total = 0.0
     for v in vals:
-        s = str(v).strip().replace(".", "").replace(",", ".")
+        if v is None:
+            continue
+        # Tipos numericos: usa diretamente, sem converter para string
+        if isinstance(v, (int, float)):
+            total += float(v)
+            continue
+        s = str(v).strip()
+        if not s or s in ('← script', 'None'):
+            continue
+        # String com virgula E ponto: formato BR com milhar ex '28.616,29'
+        if ',' in s and '.' in s:
+            if s.rfind(',') > s.rfind('.'):
+                # virgula = decimal, pontos = milhar -> remove pontos
+                s = s.replace('.', '').replace(',', '.')
+            else:
+                # ponto = decimal, virgulas = milhar -> remove virgulas
+                s = s.replace(',', '')
+        elif ',' in s:
+            # virgula decimal BR: '28616,29' -> '28616.29'
+            s = s.replace(',', '.')
+        # ponto decimal EN: '28616.29' -> usa como esta
         try:
             total += float(s)
         except ValueError:
