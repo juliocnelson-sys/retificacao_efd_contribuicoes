@@ -109,9 +109,21 @@ def soma_valores(*vals) -> float:
     return total
 
 def fmt_br(f: float) -> str:
-    # Formato SPED: decimal com virgula, SEM ponto de milhar
-    # Ex: 1234567.89 -> '1234567,89'
-    return f"{f:.2f}".replace(".", ",")
+    """
+    Formata float para o padrao SPED: virgula decimal, sem ponto de milhar.
+    Remove zeros decimais desnecessarios conforme padrao do TXT:
+      148394.4  -> '148394,4'   (nao '148394,40')
+      7122.93   -> '7122,93'
+      0.0       -> '0'          (nao '0,00')
+      2448.51   -> '2448,51'
+    """
+    if f == int(f):
+        return str(int(f))
+    # Remove zeros a direita mas mantem pelo menos 1 casa decimal
+    s = f"{f:.10f}".rstrip('0')
+    if s.endswith('.'):
+        s += '0'
+    return s.replace('.', ',')
 
 def fmt_data(v) -> str:
     """Converte data para o formato SPED: DDMMAAAA.
@@ -156,14 +168,14 @@ def fmt_valor_sped(v) -> str:
     if v is None:
         return "0,00"
     
-    # Tipos numericos do Python/Excel: int ou float -> formata direto
+    # Tipos numericos do Python/Excel: int ou float -> usa fmt_br (remove zeros)
     if isinstance(v, (int, float)):
-        return f"{v:.2f}".replace(".", ",")
+        return fmt_br(float(v))
     
     s = str(v).strip()
     
     if s in ("", "None", "← script"):
-        return "0,00"
+        return "0"
     
     # String com virgula E ponto -> formato BR com milhar: '1.234,56'
     if "," in s and "." in s:
@@ -174,29 +186,29 @@ def fmt_valor_sped(v) -> str:
             # ponto = decimal, virgulas = milhar -> remove virgulas
             s = s.replace(",", "")
         try:
-            return f"{float(s):.2f}".replace(".", ",")
+            return fmt_br(float(s))
         except ValueError:
-            return "0,00"
+            return "0"
     
     # String apenas com virgula -> decimal BR: '1234,56'
     if "," in s:
         try:
-            return f"{float(s.replace(',', '.')):.2f}".replace(".", ",")
+            return fmt_br(float(s.replace(',', '.')))
         except ValueError:
-            return "0,00"
+            return "0"
     
     # String apenas com ponto -> decimal EN: '1234.56'
     if "." in s:
         try:
-            return f"{float(s):.2f}".replace(".", ",")
+            return fmt_br(float(s))
         except ValueError:
-            return "0,00"
+            return "0"
     
     # String sem separador: '1234'
     try:
-        return f"{float(s):.2f}".replace(".", ",")
+        return fmt_br(float(s))
     except ValueError:
-        return "0,00"
+        return "0"
 
 def gc(row: dict, *keys) -> str:
     for k in keys:
@@ -502,36 +514,72 @@ def build_c_block(grupo: list) -> list:
     r0 = grupo[0]
     vl_doc  = soma_valores(*[r.get("VL_ITEM", 0) for r in grupo])
     vl_desc = soma_valores(*[r.get("VL_DESC_ITEM", 0) for r in grupo])
-    vl_pis  = soma_valores(*[r.get("VL_PIS_ITEM", 0) for r in grupo])
-    vl_cof  = soma_valores(*[r.get("VL_COFINS_ITEM", 0) for r in grupo])
-    vl_icms = soma_valores(*[r.get("VL_ICMS_ITEM", 0) for r in grupo])
-    vl_ipi  = soma_valores(*[r.get("VL_IPI_ITEM", 0) for r in grupo])
+    vl_pis     = soma_valores(*[r.get("VL_PIS_ITEM", 0) for r in grupo])
+    vl_cof     = soma_valores(*[r.get("VL_COFINS_ITEM", 0) for r in grupo])
+    vl_icms    = soma_valores(*[r.get("VL_ICMS_ITEM", 0) for r in grupo])
+    vl_ipi     = soma_valores(*[r.get("VL_IPI_ITEM", 0) for r in grupo])
+    vl_bc_icms = soma_valores(*[r.get("VL_BC_ICMS_ITEM", 0) for r in grupo])
+    # Layout C100 conforme Manual EFD Contribuicoes: 29 campos
+    # REG|IND_OPER|IND_EMIT|COD_PART|COD_MOD|COD_SIT|SER|NUM_DOC|CHV_NFE|
+    # DT_DOC|DT_E_S|VL_DOC|IND_PGTO|VL_DESC|VL_ABAT_NT|VL_MERC|IND_FRT|
+    # VL_FRT|VL_SEG|VL_OUT_DA|VL_BC_ICMS|VL_ICMS|VL_BC_ICMS_ST|VL_ICMS_ST|
+    # VL_IPI|VL_PIS|VL_COFINS|VL_PIS_ST|VL_COFINS_ST
     lines = [to_pipe(["C100",
         gc(r0,"IND_OPER"), gc(r0,"IND_EMIT"), gc(r0,"COD_PART\n(Fornecedor/Cliente)"),
         gc(r0,"COD_MOD"), gc(r0,"COD_SIT"), gc(r0,"SER"), gc(r0,"NUM_DOC"),
         gc(r0,"CHV_NFE"), fmt_data(r0.get("DT_DOC","")), fmt_data(r0.get("DT_E_S","")),
         fmt_br(vl_doc), gc(r0,"IND_PGTO"), fmt_br(vl_desc),
-        fmt_valor(r0.get("VL_ABAT_NT","")), fmt_br(vl_doc - vl_desc),
-        gc(r0,"IND_FRT"), fmt_valor(r0.get("VL_FRT","")), fmt_valor(r0.get("VL_SEG","")),
-        fmt_valor(r0.get("VL_OUT_DA","")), "0,00", fmt_br(vl_icms),
-        "0,00", "0,00", fmt_br(vl_ipi), fmt_br(vl_pis), fmt_br(vl_cof), "0,00", "0,00",
-        gc(r0,"COD_CTA")])]
+        fmt_br(soma_valores(r0.get("VL_ABAT_NT", 0))),
+        fmt_br(vl_doc - vl_desc),
+        gc(r0,"IND_FRT"),
+        fmt_br(soma_valores(r0.get("VL_FRT", 0))),
+        fmt_br(soma_valores(r0.get("VL_SEG", 0))),
+        fmt_br(soma_valores(r0.get("VL_OUT_DA", 0))),
+        fmt_br(vl_bc_icms), fmt_br(vl_icms),
+        "0", "0",
+        fmt_br(vl_ipi), fmt_br(vl_pis), fmt_br(vl_cof),
+        "0", "0"])]
     for i, r in enumerate(grupo, 1):
+        # Layout C170: 37 campos conforme Manual EFD Contribuicoes
+        # IND_APUR: '0'=nao ha apuracao especifica (padrao), vazio invalido
+        # QUANT_BC_PIS/COFINS e ALIQ_PIS_R$/COFINS_R$: '' quando nao se aplica
+        # (usado apenas para tributacao por quantidade, CST 03)
+        ind_apur = gc(r,"IND_APUR") or "0"
+        # QUANT e ALIQ_R$: preenche so se CST usar quantidade (03)
+        cst_pis    = gc(r,"CST_PIS")
+        cst_cofins = gc(r,"CST_COFINS")
+        quant_pis  = fmt_br(soma_valores(r.get("QUANT_BC_PIS",0))) if cst_pis == "03" else ""
+        aliq_pis_r = fmt_br(soma_valores(r.get("ALIQ_PIS_R$",0))) if cst_pis == "03" else ""
+        quant_cof  = fmt_br(soma_valores(r.get("QUANT_BC_COFINS",0))) if cst_cofins == "03" else ""
+        aliq_cof_r = fmt_br(soma_valores(r.get("ALIQ_COFINS_R$",0))) if cst_cofins == "03" else ""
         lines.append(to_pipe(["C170", str(i), gc(r,"COD_ITEM"), gc(r,"DESCR_COMPL"),
-            fmt_valor(r.get("QTD","")), gc(r,"UNID"), fmt_valor(r.get("VL_ITEM","")),
-            fmt_valor(r.get("VL_DESC_ITEM","")), gc(r,"IND_MOV"), gc(r,"CST_ICMS"),
-            gc(r,"CFOP"), gc(r,"COD_NAT"), fmt_valor(r.get("VL_BC_ICMS_ITEM","")),
-            fmt_valor(r.get("ALIQ_ICMS","")), fmt_valor(r.get("VL_ICMS_ITEM","")),
-            fmt_valor(r.get("VL_BC_ICMS_ST_ITEM","")), fmt_valor(r.get("ALIQ_ST","")),
-            fmt_valor(r.get("VL_ICMS_ST_ITEM","")), "", gc(r,"CST_IPI"), "",
-            fmt_valor(r.get("VL_BC_IPI","")), fmt_valor(r.get("ALIQ_IPI","")),
-            fmt_valor(r.get("VL_IPI_ITEM","")), gc(r,"CST_PIS"),
-            fmt_valor(r.get("VL_BC_PIS_ITEM","")), fmt_valor(r.get("ALIQ_PIS_%","")),
-            fmt_valor(r.get("QUANT_BC_PIS","")), fmt_valor(r.get("ALIQ_PIS_R$","")),
-            fmt_valor(r.get("VL_PIS_ITEM","")), gc(r,"CST_COFINS"),
-            fmt_valor(r.get("VL_BC_COFINS_ITEM","")), fmt_valor(r.get("ALIQ_COFINS_%","")),
-            fmt_valor(r.get("QUANT_BC_COFINS","")), fmt_valor(r.get("ALIQ_COFINS_R$","")),
-            fmt_valor(r.get("VL_COFINS_ITEM","")), gc(r,"COD_CTA_ITEM")]))
+            fmt_valor_sped(r.get("QTD","")), gc(r,"UNID"),
+            fmt_valor_sped(r.get("VL_ITEM","")),
+            fmt_valor_sped(r.get("VL_DESC_ITEM","")),
+            gc(r,"IND_MOV"), gc(r,"CST_ICMS"),
+            gc(r,"CFOP"), gc(r,"COD_NAT"),
+            fmt_valor_sped(r.get("VL_BC_ICMS_ITEM","")),
+            fmt_valor_sped(r.get("ALIQ_ICMS","")),
+            fmt_valor_sped(r.get("VL_ICMS_ITEM","")),
+            fmt_valor_sped(r.get("VL_BC_ICMS_ST_ITEM","")),
+            fmt_valor_sped(r.get("ALIQ_ST","")),
+            fmt_valor_sped(r.get("VL_ICMS_ST_ITEM","")),
+            ind_apur,
+            gc(r,"CST_IPI"), gc(r,"COD_ENQ","COD_NAT_IPI"),
+            fmt_valor_sped(r.get("VL_BC_IPI","")),
+            fmt_valor_sped(r.get("ALIQ_IPI","")),
+            fmt_valor_sped(r.get("VL_IPI_ITEM","")),
+            cst_pis,
+            fmt_valor_sped(r.get("VL_BC_PIS_ITEM","")),
+            fmt_valor_sped(r.get("ALIQ_PIS_%","")),
+            quant_pis, aliq_pis_r,
+            fmt_valor_sped(r.get("VL_PIS_ITEM","")),
+            cst_cofins,
+            fmt_valor_sped(r.get("VL_BC_COFINS_ITEM","")),
+            fmt_valor_sped(r.get("ALIQ_COFINS_%","")),
+            quant_cof, aliq_cof_r,
+            fmt_valor_sped(r.get("VL_COFINS_ITEM","")),
+            gc(r,"COD_CTA_ITEM")]))
     return lines
 
 
