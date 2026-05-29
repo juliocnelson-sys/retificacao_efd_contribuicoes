@@ -870,10 +870,29 @@ def recalc_9900(lines: list) -> list:
     bloco9.append(f"|9999|{total_arquivo}|\n")
     return new_lines + bloco9
 
+# Registros que encerram o grupo C100/D100/F100 dentro de cada X010
+# Novos C100/C170 devem ser inseridos ANTES desses registros
+_GRUPO_SUPERIOR = {
+    'C': ['C500', 'C501', 'C505', 'C600', 'C601', 'C605', 'C800', 'C810'],
+    'D': ['D500', 'D501', 'D505', 'D600', 'D601', 'D605'],
+    'F': ['F600', 'F700'],
+    'A': [],  # bloco A nao tem sub-grupos
+}
+
 def find_x010_ranges(lines: list, prefix: str) -> dict:
+    """
+    Retorna {cnpj: posicao_insercao} para cada sub-bloco X010.
+
+    A posicao de insercao respeita a hierarquia do manual:
+    - C100/C170 devem vir ANTES de C500/C600/C800
+    - D100/D101/D105 devem vir ANTES de D500/D600
+    - Para blocos sem sub-grupos (A, F simples), insere no fim do sub-bloco
+    """
     ranges = {}
     positions = []
     x990 = None
+    superiores = _GRUPO_SUPERIOR.get(prefix, [])
+
     for i, line in enumerate(lines):
         ls = line.strip()
         if ls.startswith(f"|{prefix}010|"):
@@ -881,9 +900,24 @@ def find_x010_ranges(lines: list, prefix: str) -> dict:
             positions.append((i, f[1] if len(f) > 1 else ""))
         if ls.startswith(f"|{prefix}990|"):
             x990 = i
+
     for k, (pos, cnpj) in enumerate(positions):
-        fim = positions[k+1][0] if k+1 < len(positions) else (x990 or len(lines))
-        ranges[cnpj] = fim
+        # Fim natural do sub-bloco (inicio do proximo X010 ou X990)
+        fim_natural = positions[k+1][0] if k+1 < len(positions) else (x990 or len(lines))
+
+        if superiores:
+            # Procura o primeiro registro de grupo superior dentro deste sub-bloco
+            insercao = fim_natural  # default: fim do sub-bloco
+            for i in range(pos + 1, fim_natural):
+                ls = lines[i].strip()
+                reg = ls.strip('|').split('|')[0] if ls.startswith('|') else ''
+                if reg in superiores:
+                    insercao = i  # insere ANTES deste registro
+                    break
+            ranges[cnpj] = insercao
+        else:
+            ranges[cnpj] = fim_natural
+
     return ranges
 
 def inject_by_cnpj(lines: list, prefix: str, cnpj_map: dict, log_lines: list) -> list:
