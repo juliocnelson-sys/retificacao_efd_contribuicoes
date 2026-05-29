@@ -873,10 +873,21 @@ def recalc_9900(lines: list) -> list:
 # Registros que encerram o grupo C100/D100/F100 dentro de cada X010
 # Novos C100/C170 devem ser inseridos ANTES desses registros
 _GRUPO_SUPERIOR = {
-    'C': ['C500', 'C501', 'C505', 'C600', 'C601', 'C605', 'C800', 'C810'],
-    'D': ['D500', 'D501', 'D505', 'D600', 'D601', 'D605'],
-    'F': ['F600', 'F700'],
-    'A': [],  # bloco A nao tem sub-grupos
+    # Registros que encerram o grupo C100 dentro de cada C010.
+    # Novos C100/C170 devem ser inseridos ANTES de qualquer C400/C500/C600/C800.
+    # Hierarquia conforme Manual EFD Contribuicoes v1.35:
+    #   C010 -> C100/C170 -> C400 -> C500/C501/C505 -> C600/C601/C605 -> C800/C810 -> C990
+    'C': ['C400', 'C405', 'C481', 'C489', 'C490', 'C491', 'C495',
+          'C500', 'C501', 'C505',
+          'C600', 'C601', 'C605',
+          'C800', 'C810'],
+    # D010 -> D100/D101/D105 -> D500/D501/D505 -> D600/D601/D605 -> D990
+    'D': ['D500', 'D501', 'D505',
+          'D600', 'D601', 'D605'],
+    # F010 -> F100/F120/F130/F150/F200 -> F600 -> F700 -> F800 -> F990
+    'F': ['F600', 'F700', 'F800'],
+    # A010 -> A100/A170 -> A990 (sem sub-grupos)
+    'A': [],
 }
 
 def find_x010_ranges(lines: list, prefix: str) -> dict:
