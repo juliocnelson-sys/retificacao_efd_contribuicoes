@@ -381,6 +381,27 @@ def filter_periodo(rows: list, periodo: str | None) -> list:
                 return f"{d.month:02d}{d.year}"
             except ValueError:
                 pass
+        # Formato MM/AAAA (ex: "10/2021") — sem dia
+        if len(s) == 7 and s[2] == "/":
+            try:
+                partes = s.split("/")
+                return f"{int(partes[0]):02d}{partes[1]}"
+            except (ValueError, IndexError):
+                pass
+        # Formato MM-AAAA (ex: "10-2021") — sem dia
+        if len(s) == 7 and s[2] == "-":
+            try:
+                partes = s.split("-")
+                return f"{int(partes[0]):02d}{partes[1]}"
+            except (ValueError, IndexError):
+                pass
+        # Formato M/AAAA (ex: "1/2021") — mes sem zero
+        if len(s) == 6 and "/" in s:
+            try:
+                partes = s.split("/")
+                return f"{int(partes[0]):02d}{partes[1]}"
+            except (ValueError, IndexError):
+                pass
         return s
 
     result = []
@@ -1001,23 +1022,36 @@ def retificar(txt_bytes: bytes, planilha: dict) -> tuple[bytes, list]:
             log.append(f"✔ 0140 CNPJ {cnpj} criado")
     insert_after_last("0140", novos_0140)
 
-    # 0150 — participantes
-    novos_0150 = [build_0150(r) for r in filter_periodo(planilha.get("0150_PARTICIPANTES", []), periodo)]
+    # 0150 — participantes (filtrado por período + sem duplicar COD_PART)
+    cod_0150_existentes = set()
+    for line in lines:
+        if line.strip().startswith("|0150|"):
+            f = parse_pipe(line.strip())
+            cod_0150_existentes.add(f[1] if len(f) > 1 else "")
+    novos_0150 = []
+    vistos_0150 = set()
+    for r in filter_periodo(planilha.get("0150_PARTICIPANTES", []), periodo):
+        cod = gc(r, "COD_PART")
+        if cod and cod not in cod_0150_existentes and cod not in vistos_0150:
+            novos_0150.append(build_0150(r))
+            vistos_0150.add(cod)
     insert_after_last("0150", novos_0150)
 
-    # 0190 — unidades
+    # 0190 — unidades (filtrado por período + sem duplicar UNID)
     ex_0190 = set()
     for line in lines:
         if line.strip().startswith("|0190|"):
             f = parse_pipe(line.strip()); ex_0190.add(f[1] if len(f) > 1 else "")
     novos_0190 = []
+    vistos_0190 = set()
     for r in filter_periodo(planilha.get("0190_UNIDADES", []), periodo):
         u = gc(r, "UNID")
-        if u and u not in ex_0190:
+        if u and u not in ex_0190 and u not in vistos_0190:
             novos_0190.append(build_0190(r))
+            vistos_0190.add(u)
     insert_after_last("0190", novos_0190)
 
-    # 0200 — itens (centralizado: sem duplicar COD_ITEM)
+    # 0200 — itens (filtrado por período + sem duplicar COD_ITEM)
     novos_0200 = []
     for r in filter_periodo(planilha.get("0200_ITENS", []), periodo):
         cod = gc(r, "COD_ITEM")
@@ -1031,28 +1065,33 @@ def retificar(txt_bytes: bytes, planilha: dict) -> tuple[bytes, list]:
             log.append(f"→ 0200 item {cod} já existe — mantém")
     insert_after_last("0200", novos_0200)
 
-    # 0400 — naturezas de receita
+    # 0400 — naturezas de receita (filtrado por período + sem duplicar COD_NAT_REC)
     ex_0400 = set()
     for line in lines:
         if line.strip().startswith("|0400|"):
             f = parse_pipe(line.strip()); ex_0400.add(f[1] if len(f) > 1 else "")
     novos_0400 = []
+    vistos_0400 = set()
     for r in filter_periodo(planilha.get("0400_NAT_REC", []), periodo):
         c = gc(r, "COD_NAT_REC")
-        if c and c not in ex_0400:
+        if c and c not in ex_0400 and c not in vistos_0400:
             novos_0400.append(build_0400(r))
+            vistos_0400.add(c)
     insert_after_last("0400", novos_0400)
 
-    # 0500 — plano de contas (inserido após o último 0500, antes do 0990)
+    # 0500 — plano de contas (filtrado por período + sem duplicar COD_CTA)
     ex_0500 = set()
     for line in lines:
         if line.strip().startswith("|0500|"):
-            f = parse_pipe(line.strip()); ex_0500.add(f[1] if len(f) > 1 else "")
+            f = parse_pipe(line.strip())
+            ex_0500.add(f[5] if len(f) > 5 else "")  # COD_CTA está na posição 5
     novos_0500 = []
+    vistos_0500 = set()
     for r in filter_periodo(planilha.get("0500_PLANO_CONTAS", []), periodo):
         c = gc(r, "COD_CTA")
-        if c and c not in ex_0500:
+        if c and c not in ex_0500 and c not in vistos_0500:
             novos_0500.append(build_0500(r))
+            vistos_0500.add(c)
     insert_after_last("0500", novos_0500)
 
     total_ins = len(novos_0140) + len(novos_0150) + len(novos_0190) + len(novos_0200) + len(novos_0400) + len(novos_0500)
