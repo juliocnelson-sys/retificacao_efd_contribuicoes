@@ -60,7 +60,12 @@ def parse_pipe(line: str) -> list:
     return line.strip().strip("|").split("|")
 
 def to_pipe(fields: list) -> str:
-    return "|" + "|".join(str(f) for f in fields) + "|\n"
+    # Sanitiza cada campo: remove o pipe "|" que é separador do SPED
+    # Se um campo de texto contiver "|", substitui por "/" para preservar legibilidade
+    def sanitize(f):
+        s = str(f) if f is not None else ""
+        return s.replace("|", "/")
+    return "|" + "|".join(sanitize(f) for f in fields) + "|\n"
 
 def fmt_valor(v) -> str:
     if v is None or str(v).strip() == "":
@@ -902,8 +907,14 @@ _GRUPO_SUPERIOR = {
     # D010 -> D100/D101/D105 -> D500/D501/D505 -> D600/D601/D605 -> D990
     'D': ['D500', 'D501', 'D505',
           'D600', 'D601', 'D605'],
-    # F010 -> F100/F120/F130/F150/F200 -> F600 -> F700 -> F800 -> F990
-    'F': ['F600', 'F700', 'F800'],
+    # F010 -> F100 -> F111 -> F120 -> F129 -> F130 -> F139 -> F150 -> F200/F205/F210 -> F600 -> F700 -> F800 -> F990
+    # F100 deve ser inserido ANTES de F120, F129, F130, F139, F150, F200 e F600/F700/F800
+    'F': ['F111',
+          'F120', 'F129',
+          'F130', 'F139',
+          'F150',
+          'F200', 'F205', 'F210',
+          'F600', 'F700', 'F800'],
     # A010 -> A100/A170 -> A990 (sem sub-grupos)
     'A': [],
 }
